@@ -1,4 +1,3 @@
-
 install.packages("here", "tidyverse", "stringdist", "tidytext", "lubridate", "sp", "rgdal", "tigris")
 library(here)
 library(tidyverse)
