@@ -1,18 +1,23 @@
-install.packages("RSocrata")
 library(RSocrata)
-setwd("/nfs/bedbugs-data/Summer_2018/Chicago")
-chicago_data <- read.socrata("https://data.cityofchicago.org/resource/ucdv-yd74.json")
-write_csv(as.data.frame(chicago_data), "data/Chicago_Violations.csv")
 library(sf)
+library(tidyverse)
+library(tidytext)
+library(stringdist)
 
-chicago_data<-chicago_data %>% filter(!is.na(latitude), !is.na(longitude))
-chicago_data<-chicago_data %>% mutate(latitude = as.numeric(latitude), longitude = as.numeric(longitude))
-chicago_data <-st_as_sf(chicago_data, coords = c("longitude", "latitude"))
-#plot(chicago_data_sp$geometry)
+setwd("/nfs/bedbugs-data/Summer_2018/Chicago")
+#chicago_data <- read.socrata("https://data.cityofchicago.org/resource/ucdv-yd74.json")
+#saveRDS(chicago_data, "data/chicago_violations.rds")
+chicago_data<- readRDS("data/chicago_violations.rds")
+chicago_data$location.coordinates<-NULL
+chicago_data<-as.data.frame(chicago_data)
+
 chicago_data<-chicago_data %>% mutate(V_Date = violation_date)
 chicago_data<-chicago_data %>% mutate(V_Year = lubridate::year(V_Date))
 chicago_data<-chicago_data %>% mutate(V_Month = lubridate::month(V_Date))
 chicago_data<-chicago_data %>% mutate(V_Month_Date = paste(V_Month, V_Year, sep="-"))
+
+chicago_data<-chicago_data %>% filter(!is.na(latitude), !is.na(longitude))
+chicago_data<-chicago_data %>% mutate(latitude = as.numeric(latitude), longitude = as.numeric(longitude))
 
 pests <- chicago_data %>% filter(violation_code == "CN134016" |
                                    violation_code == "CN135016"|
@@ -22,9 +27,10 @@ pests <- chicago_data %>% filter(violation_code == "CN134016" |
 pests<-pests %>% mutate(Violation = recode(violation_code, "CN134016" = "Rats", "CN135016" = "Mice and Rodents", "CN136016" = "Roaches", "CN136026" = "Insects"))
 
 pests_month<-pests %>% group_by(V_Year, V_Month, Violation) %>% summarise(count=n())
-pests_month<-pests_month %>% mutate(V_Month_Year = as_date(paste(V_Year, V_Month, "01", sep="-")))
+pests_month<-pests_month %>% mutate(V_Month_Year = lubridate::as_date(paste(V_Year, V_Month, "01", sep="-")))
 
-tidy_insects_base<-chicago_data %>%  filter(violation_code == "CN136026") %>% select(id, violation_inspector_comments) %>% unnest_tokens(bigram, violation_inspector_comments, token = "ngrams", n=2)
+
+tidy_insects_base<-chicago_data  %>% filter(violation_code == "CN136026") %>% select(id, violation_inspector_comments) %>% tidytext::unnest_tokens(bigram, violation_inspector_comments, token = "ngrams", n=2)
 tidy_insects_1_separated <- tidy_insects_base %>%
   separate(bigram, c("word1", "word2"), sep = " ")
 tidy_insects_1_separated$match1<- ifelse(tidy_insects_1_separated$word1 == "bed" & tidy_insects_1_separated$word2 == "bug", 1, 0)
@@ -43,19 +49,28 @@ rm(tidy_insects_1_separated, tidy_insects_base, tidy_insects_test)
 insects <- pests %>% filter(violation_code == "CN136026")
 insects$bb[is.na(insects$bb)]<-0
 
+
 library(leaflet)
-leaflet() %>% addTiles()%>% setView(lng = -87.623177, lat = 41.881832, zoom = 10)
+chicago_data <-st_as_sf(chicago_data, coords = c("longitude", "latitude"))
+insects<-st_as_sf(insects, coords = c("longitude", "latitude"))
+#leaflet() %>% addTiles()%>% setView(lng = -87.623177, lat = 41.881832, zoom = 10)
 
-insects_sp<-insects %>% filter(!is.na(latitude), !is.na(longitude))
-insects_sp<-insects_sp %>% mutate(latitude = as.numeric(latitude), longitude = as.numeric(longitude))
-insects_sp <-st_as_sf(insects_sp, coords = c("longitude", "latitude"))
-plot(insects_sp$geometry)
+#Plot Points
+leaflet(insects[insects$bb == 1,]) %>% addTiles()%>% setView(lng = -87.623177, lat = 41.881832, zoom = 10) %>% addCircleMarkers(radius = .5)
 
-leaflet(insects_sp) %>% addTiles()%>% setView(lng = -87.623177, lat = 41.881832, zoom = 10) %>% addCircleMarkers(radius = .5)
-leaflet(insects_sp[insects_sp$bb == 1,]) %>% addTiles()%>% setView(lng = -87.623177, lat = 41.881832, zoom = 10) %>% addCircleMarkers(radius = .5)
+leaflet(insects[insects$bb == 1,]) %>% addProviderTiles(providers$Esri.WorldImagery)%>% setView(lng = -87.623177, lat = 41.881832, zoom = 10) %>% 
+  addMarkers(label = ~paste0(address, ": ", violation_ordinance), clusterOptions = markerClusterOptions())
+
+library(leaflet.extras)
 
 
+leaflet(insects[insects$bb == 1,]) %>% addProviderTiles(providers$Esri.WorldImagery)%>% setView(lng = -87.623177, lat = 41.881832, zoom = 10) %>% 
+  addWebGLHeatmap(lng=~longitude, lat=~latitude,size=20,units='px')
 
+library(leaflet.extras)
+leaflet(insects[insects$bb == 1,]) %>% addTiles()%>% setView(lng = -87.623177, lat = 41.881832, zoom = 10) %>% 
+addHeatmap(lng = ~geometry[2], lat = ~geometry[1], intensity = ~mag,
+           blur = 20, max = 0.05, radius = 15)
 
 #Prepare Data for Time Series Analysis ----
 insects_month<-insects %>% group_by(V_Year, V_Month, bb) %>% summarise(count=n())
